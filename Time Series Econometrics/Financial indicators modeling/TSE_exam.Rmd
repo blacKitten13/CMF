@@ -1,0 +1,527 @@
+---
+title: "TSE_exam"
+author: "Kovalev Evgeny"
+date: '2016, December 24'
+output: pdf_document
+keep_tex: yes 
+template: default.tex 
+header-includes:
+   - \usepackage[T2A]{fontenc}
+   - \usepackage[utf8]{inputenc}
+   - \usepackage[russian]{babel}
+---
+
+# 1 Предобработка данных и графики рядов
+
+Заметим, что дубликатов нет совсем, а пропусков в коротких рядах нет, и есть только там, где имеются значения длинных рядов.
+
+Сначала я добавил в исходную таблицу строки для пропущенных наблюдений. Затем я заполнил года и кварталы в данных строчках в 
+соответствии с порядком. Потом я начал добавлять соответствующие значения целевых показателей.
+
+1. Денежные средства и денежные эквиваленты
+
+Видно, что почти нигде не бывает поквартальных отчетов. Поэтому для каждого года заполним пропуски одними и теми же значениями, 
+соответствующими этому году. Исключения: 2004 год (нет никакой информации, заполняем средним по 2003/2005 годам), 2009 год (там 
+происходит что-то странное, похожее на выброс. От греха подальше заполним этот год значением за 4 квартал).
+
+2. Заемные средства (долгосрочные/краткосрочные)
+
+То же самое, 2004 год заполняем средним по 2003/2005, в случае 2000 года, где отличаются значения за 1-2 и 4 квартал, заполним 
+значение за 3 квартал средним.
+
+3. Выручка/валовая прибыль/чистая прибыль
+
+Заменять средним по такому же кварталу прошлого/следующего года - идея неплохая, но пропусков для этого слишком много. Поэтому было 
+решено делать это при малейшей возможности, а перед этим заполнять пропуски значениями прямой, соединяющей два ближайших квартала 
+без пропусков. Например, пусть B - значение признака за 4 квартал одного года, A - значение признака за 4 квартал прошлого года, и за 1-2-3 кварталы данного года значений нет. Тогда эти пропуски заполнятся значениями (B + 3A)/4, (B + A)/2, (3B + A)/4, соответственно.
+
+После всего заполнения пропусков в выручке, валовой прибыли и чистой прибыли каждое значение за 4 квартал было заменено на (значение за 4 квартал - значение за 3 квартал), после этого значение за 3 квартал на (значение за 3 квартал - значение за 2 квартал), после этого значение за 2 квартал на (значение за 2 квартал - значение за 1 квартал).
+
+В ходе подобной обработки данных возникла новая таблица Evroplan_new.xlsx, уже без пропусков и с переходом к поквартальным значениям - с ней и будем работать.
+
+```{r results='hide', message=FALSE, warning=FALSE}
+library(forecast)
+library(readxl)
+library(plyr)
+library(tseries)
+library(MASS)
+```
+
+```{r message=FALSE, warning=FALSE}
+data <- read_excel("C:/Users/Вредный Я/Desktop/Data Analysis/CMF/Time Series Econometrics/Exam (Financial indicators modeling)/Evroplan_new.xlsx")
+# убираем столбцы, заполненные только NA
+data <- data[colSums(!is.na(data)) > 0]
+# убираем первые две строки
+data <- data[-c(1, 2), ]
+# переименовываем некоторые столбцы
+names(data)[1] <- "Год"
+names(data)[2] <- "Квартал"
+names(data)[33] <- "Заемные средства.2"
+# сбрасываем индексацию строк
+rownames(data) <- seq(length=nrow(data))
+
+cash <- as.numeric(rev(data$`Денежные средства и денежные эквиваленты`))
+ltb <- as.numeric(rev(data$`Заемные средства`))
+stb <- as.numeric(rev(data$`Заемные средства.2`))
+rv <- as.numeric(rev(data$`Выручка`))
+gp <- as.numeric(rev(data$`Валовая прибыль (убыток)`))
+np <- as.numeric(rev(data$`Чистая прибыль (убыток)`))
+
+tsdisplay(ts(cash, frequency=4, start=c(1999, 4)), lag.max=40, main="Cash time series plot",
+          xlab="Time", ylab="Cash")
+tsdisplay(ts(ltb, frequency=4, start=c(1999, 4)), lag.max=40,
+          main="Long-term borrowings time series plot", xlab="Time", ylab="Long-term borrowings")
+tsdisplay(ts(stb, frequency=4, start=c(1999, 4)), lag.max=40,
+          main="Short-term borrowings time series plot", xlab="Time", ylab="Short-term borrowings")
+tsdisplay(ts(rv, frequency=4, start=c(1999, 4)), lag.max=40, main="Revenue time series plot",
+          xlab="Time", ylab="Revenue")
+tsdisplay(ts(gp, frequency=4, start=c(1999, 4)), lag.max=40, main="Gross profit time series plot",
+          xlab="Time", ylab="Gross profit")
+tsdisplay(ts(np, frequency=4, start=c(1999, 4)), lag.max=40, main="Net profit time series plot",
+          xlab="Time", ylab="Net profit")
+```
+
+Видно, что масштабы значений очень сильно различаются. Поэтому нарисуем те же самые графики, но в логарифмическом масштабе (также это поможет стабилизировать дисперсию).
+
+```{r message=FALSE, warning=FALSE}
+# во избежание проблем с логарифмированием переводим все неположительные значения в 1
+cash[cash <= 0] <- 1
+ltb[ltb <= 0] <- 1
+stb[stb <= 0] <- 1
+rv[rv <= 0] <- 1
+gp[gp <= 0] <- 1
+np[np <= 0] <- 1
+tsdisplay(ts(log(cash), frequency=4, start=c(1999, 4)), lag.max=40, main="log(Cash) time series plot",
+          xlab="Time", ylab="log(Cash)")
+tsdisplay(ts(log(ltb), frequency=4, start=c(1999, 4)), lag.max=40,
+          main="log(Long-term borrowings) time series plot)", xlab="Time", ylab="log(Long-term borrowings)")
+tsdisplay(ts(stb, frequency=4, start=c(1999, 4)), lag.max=40,
+          main="log(Short-term borrowings) time series plot)", xlab="Time", ylab="log(Short-term borrowings)")
+tsdisplay(ts(log(rv), frequency=4, start=c(1999, 4)), lag.max=40, main="log(Revenue) time series plot",
+          xlab="Time", ylab="log(Revenue)")
+tsdisplay(ts(log(gp), frequency=4, start=c(1999, 4)), lag.max=40, main="log(Gross profit) time series plot",
+          xlab="Time", ylab="log(Gross profit)")
+tsdisplay(ts(log(np), frequency=4, start=c(1999, 4)), lag.max=40, main="log(Net profit) time series plot",
+          xlab="Time", ylab="log(Net profit)")
+```
+
+# 2 Ретроспективный прогноз
+
+## 2.1 STL
+
+STL-декомпозиция рядов:
+
+```{r message=FALSE, warning=FALSE}
+plot(stl(ts(log(cash[1:59]), frequency=4, start=c(1999, 4)), s.window="periodic", robust=FALSE))
+plot(stl(ts(log(ltb[1:59]), frequency=4, start=c(1999, 4)), s.window="periodic", robust=FALSE))
+plot(stl(ts(log(stb[1:59]), frequency=4, start=c(1999, 4)), s.window="periodic", robust=FALSE))
+plot(stl(ts(log(rv[1:59]), frequency=4, start=c(1999, 4)), s.window="periodic", robust=FALSE))
+plot(stl(ts(log(gp[1:59]), frequency=4, start=c(1999, 4)), s.window="periodic", robust=FALSE))
+plot(stl(ts(log(np[1:59]), frequency=4, start=c(1999, 4)), s.window="periodic", robust=FALSE))
+```
+
+## 2.2 Дифференцирование и стационарность
+
+Применим сезонное/обычное дифференцирование по необходимости. Проверим стационарность с помощью критерия Дики-Фуллера.
+
+```{r}
+cash.diff <- diff(log(cash[1:59]), 4)
+adf.test(cash.diff)
+ltb.diff <- diff(log(ltb[1:59]), 1)
+adf.test(ltb.diff)
+adf.test(log(stb[1:59]))
+adf.test(log(rv[1:59]))
+gp.diff <- diff(log(gp[1:59]), 1)
+adf.test(gp.diff)
+np.diff <- diff(log(np[1:59]), 4)
+adf.test(np.diff)
+
+plot(stl(ts(cash.diff, frequency=4, start=c(2000, 4)), s.window="periodic", robust=FALSE))
+plot(stl(ts(ltb.diff, frequency=4, start=c(2000, 1)), s.window="periodic", robust=FALSE))
+plot(stl(ts(gp.diff, frequency=4, start=c(2000, 1)), s.window="periodic", robust=FALSE))
+plot(stl(ts(np.diff, frequency=4, start=c(2000, 4)), s.window="periodic", robust=FALSE))
+```
+
+## 2.3 Выбор лучшей модели, анализ остатков и прогноз
+
+Далее нам понадобятся три функции:
+
+- best.arima.model: ищет лучшую ARIMA-модель, перебирая модели с разными параметрами p, q, P, Q и сравнивая их по критерию Акаике;
+
+- arima.model.analysis: анализирует остатки модели (проверяет несмещенность с помощью теста Стьюдента, стационарность с помощью теста Дики-Фуллера и неавтокоррелированность с помощью теста Бокса-Пирса);
+
+- arima.model.predict: делает предсказание.
+
+```{r}
+best.arima.model <- function(data, p0=4, q0=4, P0=1, Q0=1, d=0, D=0) {
+  # все возможные комбинации параметров
+  params <- expand.grid(0:p0, 0:q0, 0:P0, 0:Q0)
+  models <- vector("list", nrow(params))
+  aics <- numeric(nrow(params))
+  for (i in 1:nrow(params)) {
+    # tryCatch нужен, потому что на некоторых наборах параметров модель может не обучаться
+    tryCatch({
+      models[[i]] <- arima(data, order=c(params[i, 1], d, params[i, 2]),
+                         seasonal=list(order=c(params[i, 3], D, params[i, 4]), period=4))
+    aics[[i]] <- models[[i]]$aic
+    }, error=function(e) {
+      cat("Wrong parameters:", params[i, 1], params[i, 2], params[i, 3], params[i, 4], "\n")
+    })
+  }
+  # там, где модель не обучается, будет стоять AIC=0
+  # нам этого не нужно, поэтому все такие значения поменяем на какое-нибудь очень большое
+  aics[aics==0] <- 100000000
+  # лучшая модель и лучшие параметры
+  best.model <- arima(data, order=c(params[which.min(aics), 1], d, params[which.min(aics), 2]),
+                      seasonal=list(order=c(params[which.min(aics), 3], D, params[which.min(aics), 4]),
+                                    period=4))
+  print(best.model)
+  cat("Best parameters:", params[which.min(aics), 1], params[which.min(aics), 2],
+      params[which.min(aics), 3], params[which.min(aics), 4])
+  return(best.model)
+}
+
+arima.model.analysis <- function(model, data, ylab) {
+  tsdisplay(ts(model$residuals, frequency=4, start=c(1999, 4)), lag.max=40,
+            main=paste(ylab, "residuals time series plot", sep=" "), xlab="Time",
+            ylab=paste(ylab, "residuals", sep=" "))
+  # анализ остатков
+  print(t.test(model$residuals))
+  print(adf.test(model$residuals))
+  print(Box.test(model$residuals))
+}
+
+arima.model.predict <- function(model, data, ylab, start=c(2014, 3)) {
+  data.predict <- as.numeric(predict(model, n.ahead=8)$pred)
+  plot(ts(data, frequency=4, start=c(1999, 4)), ylab=ylab, xlim=c(1999, start[1] + 2),
+       ylim=c(0, max(data, exp(data.predict))))
+  title(paste(ylab, "time series plot", sep=" "))
+  lines(ts(exp(data.predict), frequency=4, start=start), col="red")
+  return(exp(data.predict))
+}
+```
+
+### 2.3.1 Денежные средства и денежные эквиваленты
+
+Найдем лучшую модель для денежных средств и денежных эквивалентов.
+
+```{r message=FALSE, warning=FALSE}
+best.cash.model <- best.arima.model(log(cash[1:59]), D=1)
+```
+
+Проанализируем остатки.
+
+```{r}
+arima.model.analysis(best.cash.model, log(cash[1:59]), "log(Cash)")
+```
+
+Остатки несмещены, стационарны и неавтокоррелированы.
+
+Сделаем прогноз.
+
+```{r message=FALSE, warning=FALSE}
+cash.predict <- arima.model.predict(best.cash.model, cash, "Cash")
+```
+
+### 2.3.2 Долгосрочные заемные средства
+
+Найдем лучшую модель для долгосрочных заемных средств.
+
+```{r message=FALSE, warning=FALSE}
+best.ltb.model <- best.arima.model(log(ltb[1:59]), d=1)
+```
+
+Проанализируем остатки.
+
+```{r}
+arima.model.analysis(best.ltb.model, log(ltb[1:59]), "log(Long-term borrowings)")
+```
+
+Остатки несмещены, стационарны и неавтокоррелированы.
+
+Сделаем прогноз.
+
+```{r message=FALSE, warning=FALSE}
+ltb.predict <- arima.model.predict(best.ltb.model, ltb, "Long-term borrowings")
+```
+
+### 2.3.3 Краткосрочные заемные средства
+
+Найдем лучшую модель для краткосрочных заемных средств.
+
+```{r message=FALSE, warning=FALSE}
+best.stb.model <- best.arima.model(log(stb[1:59]))
+```
+
+Проанализируем остатки.
+
+```{r}
+arima.model.analysis(best.stb.model, log(stb[1:59]), "log(Short-term borrowings)")
+```
+
+Остатки несмещены, стационарны и неавтокоррелированы.
+
+Сделаем прогноз.
+
+```{r message=FALSE, warning=FALSE}
+stb.predict <- arima.model.predict(best.stb.model, stb, "Short-term borrowings")
+```
+
+### 2.3.4 Выручка
+
+Найдем лучшую модель для выручки.
+
+```{r message=FALSE, warning=FALSE}
+best.rv.model <- best.arima.model(log(rv[1:59]))
+```
+
+Проанализируем остатки.
+
+```{r}
+arima.model.analysis(best.rv.model, log(rv[1:59]), "log(Revenue)")
+```
+
+Остатки несмещены, стационарны и неавтокоррелированы.
+
+Сделаем прогноз.
+
+```{r message=FALSE, warning=FALSE}
+rv.predict <- arima.model.predict(best.rv.model, rv, "Revenue")
+```
+
+### 2.3.5 Валовая прибыль
+
+Найдем лучшую модель для валовой прибыли.
+
+```{r message=FALSE, warning=FALSE}
+best.gp.model <- best.arima.model(log(gp[1:59]), d=1)
+```
+
+Проанализируем остатки.
+
+```{r}
+arima.model.analysis(best.gp.model, log(gp[1:59]), "log(Gross profit)")
+```
+
+Остатки несмещены, стационарны и неавтокоррелированы.
+
+Сделаем прогноз.
+
+```{r message=FALSE, warning=FALSE}
+gp.predict <- arima.model.predict(best.gp.model, gp, "Gross profit")
+```
+
+### 2.3.6 Чистая прибыль
+
+Найдем лучшую модель для чистой прибыли.
+
+```{r message=FALSE, warning=FALSE}
+best.np.model <- best.arima.model(log(np[1:59]), D=1)
+```
+
+Проанализируем остатки.
+
+```{r}
+arima.model.analysis(best.np.model, log(np[1:59]), "log(Net profit)")
+```
+
+Остатки несмещены, стационарны и неавтокоррелированы.
+
+Сделаем прогноз.
+
+```{r message=FALSE, warning=FALSE}
+np.predict <- arima.model.predict(best.np.model, np, "Net profit")
+```
+
+Исходя из анализа остатков, модели построены достаточно хорошие, но видно, что в некоторых местах прогноз сильно расходится с реальностью. Скорее всего, это происходит из-за непредсказуемых изменений переменных: например, в выручке с 2012 по 2015 год был стабильный подъем, который повлиял на прогноз модели, хотя в 2015 году начался спад; в 2015-2016 годах был огромный скачок значения краткосрочных заемных средств, и предсказать его было нельзя. Также не стоит забывать и об обилии пропусков в начальных данных, которые в большинстве своем пришлось заполнять по линейности, что могло сильно повлиять на качество моделей.
+
+# 3 Перспективный прогноз
+
+Перспективный прогноз будем делать по той же схеме, что и ретроспективный.
+
+## 3.1 STL
+
+STL-декомпозиция рядов:
+
+```{r message=FALSE, warning=FALSE}
+plot(stl(ts(log(cash), frequency=4, start=c(1999, 4)), s.window="periodic", robust=FALSE))
+plot(stl(ts(log(ltb), frequency=4, start=c(1999, 4)), s.window="periodic", robust=FALSE))
+plot(stl(ts(log(stb), frequency=4, start=c(1999, 4)), s.window="periodic", robust=FALSE))
+plot(stl(ts(log(rv), frequency=4, start=c(1999, 4)), s.window="periodic", robust=FALSE))
+plot(stl(ts(log(gp), frequency=4, start=c(1999, 4)), s.window="periodic", robust=FALSE))
+plot(stl(ts(log(np), frequency=4, start=c(1999, 4)), s.window="periodic", robust=FALSE))
+```
+
+## 3.2 Дифференцирование и стационарность
+
+Применим сезонное/обычное дифференцирование по необходимости. Проверим стационарность с помощью критерия Дики-Фуллера.
+
+```{r}
+persp.cash.diff <- diff(log(cash), 4)
+adf.test(persp.cash.diff)
+persp.ltb.diff <- diff(log(ltb), 4)
+persp.ltb.diff <- diff(persp.ltb.diff, 2)
+adf.test(persp.ltb.diff)
+adf.test(log(stb))
+persp.rv.diff <- diff(log(rv), 4)
+adf.test(persp.rv.diff)
+persp.gp.diff <- diff(log(gp), 2)
+adf.test(persp.gp.diff)
+adf.test(log(np))
+
+plot(stl(ts(persp.cash.diff, frequency=4, start=c(2000, 4)), s.window="periodic", robust=FALSE))
+plot(stl(ts(persp.ltb.diff, frequency=4, start=c(2001, 2)), s.window="periodic", robust=FALSE))
+plot(stl(ts(persp.rv.diff, frequency=4, start=c(2000, 4)), s.window="periodic", robust=FALSE))
+plot(stl(ts(persp.gp.diff, frequency=4, start=c(2000, 2)), s.window="periodic", robust=FALSE))
+```
+
+## 3.3 Выбор лучшей модели, анализ остатков и прогноз
+
+Для поиска лучшей ARIMA-модели, анализа ее остатков и предсказания будем использовать написанные ранее функции.
+
+### 3.3.1 Денежные средства и денежные эквиваленты
+
+Найдем лучшую модель для денежных средств и денежных эквивалентов.
+
+```{r message=FALSE, warning=FALSE}
+best.persp.cash.model <- best.arima.model(log(cash), D=1)
+```
+
+Проанализируем остатки.
+
+```{r}
+arima.model.analysis(best.persp.cash.model, log(cash), "log(Cash)")
+```
+
+Остатки несмещены, стационарны и неавтокоррелированы.
+
+Сделаем прогноз.
+
+```{r message=FALSE, warning=FALSE}
+persp.cash.predict <- arima.model.predict(best.persp.cash.model, cash, "Cash", start=c(2016, 3))
+```
+
+### 3.3.2 Долгосрочные заемные средства
+
+Найдем лучшую модель для долгосрочных заемных средств.
+
+```{r message=FALSE, warning=FALSE}
+best.persp.ltb.model <- best.arima.model(log(ltb), d=2, D=1)
+```
+
+Проанализируем остатки.
+
+```{r}
+arima.model.analysis(best.persp.ltb.model, log(ltb), "log(Long-term borrowings)")
+```
+
+Остатки несмещены и стационарны. Несмотря на то, что критерий Бокса-Пирса указывает на возможный неучет всех особенностей данных (то есть, наверное, можно найти модель чуть получше), из коррелограмм видно, что остатки в целом не так уж сильно автокоррелированы. Поэтому можно не заморачиваться по поводу идеального качества остатков и остановиться на данной модели.
+
+Сделаем прогноз.
+
+```{r message=FALSE, warning=FALSE}
+persp.ltb.predict <- arima.model.predict(best.persp.ltb.model, ltb, "Long-term borrowings",
+                                         start=c(2016, 3))
+```
+
+### 3.3.3 Краткосрочные заемные средства
+
+Найдем лучшую модель для краткосрочных заемных средств.
+
+```{r message=FALSE, warning=FALSE}
+best.persp.stb.model <- best.arima.model(log(stb))
+```
+
+Проанализируем остатки.
+
+```{r}
+arima.model.analysis(best.persp.stb.model, log(stb), "log(Short-term borrowings)")
+```
+
+Остатки несмещены, стационарны и неавтокоррелированы.
+
+Сделаем прогноз.
+
+```{r message=FALSE, warning=FALSE}
+persp.stb.predict <- arima.model.predict(best.persp.stb.model, stb, "Short-term borrowings",
+                                         start=c(2016, 3))
+```
+
+### 3.3.4 Выручка
+
+Найдем лучшую модель для выручки.
+
+```{r message=FALSE, warning=FALSE}
+best.persp.rv.model <- best.arima.model(log(rv), D=1)
+```
+
+Проанализируем остатки.
+
+```{r}
+arima.model.analysis(best.persp.rv.model, log(rv), "log(Revenue)")
+```
+
+Остатки несмещены, стационарны и неавтокоррелированы.
+
+Сделаем прогноз.
+
+```{r message=FALSE, warning=FALSE}
+persp.rv.predict <- arima.model.predict(best.persp.rv.model, rv, "Revenue", start=c(2016, 3))
+```
+
+### 3.3.5 Валовая прибыль
+
+Найдем лучшую модель для валовой прибыли.
+
+```{r message=FALSE, warning=FALSE}
+best.persp.gp.model <- best.arima.model(log(gp), d=2)
+```
+
+Проанализируем остатки.
+
+```{r}
+arima.model.analysis(best.persp.gp.model, log(gp), "log(Gross profit)")
+```
+
+Остатки несмещены, стационарны и неавтокоррелированы.
+
+Сделаем прогноз.
+
+```{r message=FALSE, warning=FALSE}
+persp.gp.predict <- arima.model.predict(best.persp.gp.model, gp, "Gross profit", start=c(2016, 3))
+```
+
+### 3.3.6 Чистая прибыль
+
+Найдем лучшую модель для чистой прибыли.
+
+```{r message=FALSE, warning=FALSE}
+best.persp.np.model <- best.arima.model(log(np))
+```
+
+Проанализируем остатки.
+
+```{r}
+arima.model.analysis(best.persp.np.model, log(np), "log(Net profit)")
+```
+
+Остатки несмещены, стационарны и неавтокоррелированы.
+
+Сделаем прогноз.
+
+```{r message=FALSE, warning=FALSE}
+persp.np.predict <- arima.model.predict(best.persp.np.model, np, "Net profit", start=c(2016, 3))
+```
+
+# 4 Сохранение результатов
+```{r}
+# таблица с прогнозами
+forecast.df <- data.frame(rev(persp.cash.predict), rev(persp.ltb.predict), rev(persp.stb.predict),
+                          rev(persp.rv.predict), rev(persp.gp.predict), rev(persp.np.predict))
+names(forecast.df) <- c("Cash", "Long-term borrowings", "Short-term borrowings",
+                        "Revenue", "Gross profit", "Net profit")
+forecast.df <- data.frame(Quarter=c(2, 1, 4, 3, 2, 1, 4, 3), forecast.df)
+forecast.df <- data.frame(Year=c(2018, 2018, 2017, 2017, 2017, 2017, 2016, 2016), forecast.df)
+forecast.df
+write.csv(forecast.df, "C:/Users/Вредный Я/Desktop/Data Analysis/CMF/Time Series Econometrics/Exam (Financial indicators modeling)/Evroplan_forecast.csv", quote=FALSE, row.names=FALSE)
+```
