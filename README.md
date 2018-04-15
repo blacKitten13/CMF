@@ -1,1 +1,1 @@
-# CMF
+While studying at Higher School of Economics, I have also become a student of Center of Mathematical Finances at Moscow State University. Here you can find some of my homework assignments/projects that I have done there.
